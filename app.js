@@ -24,20 +24,72 @@ $("#modalClose").addEventListener("click",closeModal);$("#modalBackdrop").addEve
 $("#menuBtn").addEventListener("click",()=>$("#mainNav").classList.toggle("open"));
 $("#categoryChips").addEventListener("click",e=>{const b=e.target.closest("[data-category]");if(!b)return;category=b.dataset.category;document.querySelectorAll(".chip").forEach(c=>c.classList.toggle("active",c===b));render();});
 $("#sortSelect").addEventListener("change",render);$("#searchForm").addEventListener("submit",e=>{e.preventDefault();if($("#checkin").value&&$("#checkout").value&&$("#checkout").value<=$("#checkin").value){toast("Check-out must be after check-in.");return;}render();$("#stays").scrollIntoView({behavior:"smooth"});});
+
+/* Corrected property form: capture the form before awaiting any network request. */
 $("#hostForm").addEventListener("submit",async e=>{
- e.preventDefault();const f=new FormData(e.currentTarget);const files=[...($("#propertyPhotos").files||[])];
+ e.preventDefault();
+ const form=e.currentTarget;
+ const f=new FormData(form);
+ const files=[...($("#propertyPhotos").files||[])];
+
  if(!havenClient||!currentUser){$("#hostMessage").textContent="Please sign in before saving a property. Your draft and photos will be stored in Haven.";return;}
- const row={title:String(f.get("title")||"").trim(),description:String(f.get("description")||"").trim(),city:String(f.get("city")||"").trim(),country:String(f.get("country")||"").trim(),price_per_night:Number(f.get("price")),currency:f.get("currency"),property_type:f.get("type"),max_guests:Number(f.get("guests")||2),bedrooms:Number(f.get("bedrooms")||1),bathrooms:Number(f.get("bathrooms")||1),amenities:String(f.get("amenities")||"").split(",").map(x=>x.trim()).filter(Boolean),guest_rules:String(f.get("rules")||"").trim(),status:"draft",host_id:currentUser.id};
+
+ const row={
+  title:String(f.get("title")||"").trim(),
+  description:String(f.get("description")||"").trim(),
+  city:String(f.get("city")||"").trim(),
+  country:String(f.get("country")||"").trim(),
+  price_per_night:Number(f.get("price")),
+  currency:f.get("currency"),
+  property_type:f.get("type"),
+  max_guests:Number(f.get("guests")||2),
+  bedrooms:Number(f.get("bedrooms")||1),
+  bathrooms:Number(f.get("bathrooms")||1),
+  amenities:String(f.get("amenities")||"").split(",").map(x=>x.trim()).filter(Boolean),
+  guest_rules:String(f.get("rules")||"").trim(),
+  status:"draft",
+  host_id:currentUser.id
+ };
+
  if(!row.title||!row.city||!Number.isFinite(row.price_per_night)||row.price_per_night<=0){$("#hostMessage").textContent="Enter a property name, destination and valid nightly price.";return;}
  if(files.length>12){$("#hostMessage").textContent="Please upload no more than 12 photos.";return;}
  if(files.some(file=>!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>10*1024*1024)){$("#hostMessage").textContent="Every photo must be JPG, PNG or WebP and under 10 MB.";return;}
- const submit=e.currentTarget.querySelector('button[type="submit"]');submit.disabled=true;submit.textContent="Saving property…";
- try{const {data:property,error}=await havenClient.from("properties").insert(row).select("id").single();if(error)throw error;const urls=[];
-  for(let i=0;i<files.length;i++){const file=files[i],ext=file.name.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g,'')||'jpg',path=`${currentUser.id}/${property.id}-${Date.now()}-${i}.${ext}`;const {error:uploadError}=await havenClient.storage.from('haven-listing-images').upload(path,file,{contentType:file.type,upsert:false});if(uploadError)throw uploadError;urls.push(havenClient.storage.from('haven-listing-images').getPublicUrl(path).data.publicUrl);}
-  const updates={gallery_urls:urls};if(urls.length)updates.image_url=urls[0];const {error:updateError}=await havenClient.from('properties').update(updates).eq('id',property.id);if(updateError)throw updateError;
-  $("#hostMessage").textContent=`Property saved with ${urls.length} photo${urls.length===1?'':'s'}. It is a draft and will appear publicly after review and publishing.`;e.currentTarget.reset();toast("Property draft saved");
- }catch(err){$("#hostMessage").textContent="Could not finish saving the property: "+(err.message||"Please try again.");}finally{submit.disabled=false;submit.textContent="Save property draft ↗";}
+
+ const submit=form.querySelector('button[type="submit"]');
+ if(!submit){$("#hostMessage").textContent="Could not find the save button.";return;}
+ submit.disabled=true;
+ submit.textContent="Saving property…";
+
+ try{
+  const {data:property,error}=await havenClient.from("properties").insert(row).select("id").single();
+  if(error)throw error;
+  const urls=[];
+
+  for(let i=0;i<files.length;i++){
+   const file=files[i],
+    ext=file.name.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g,'')||'jpg',
+    path=`${currentUser.id}/${property.id}-${Date.now()}-${i}.${ext}`;
+   const {error:uploadError}=await havenClient.storage.from('haven-listing-images').upload(path,file,{contentType:file.type,upsert:false});
+   if(uploadError)throw uploadError;
+   urls.push(havenClient.storage.from('haven-listing-images').getPublicUrl(path).data.publicUrl);
+  }
+
+  const updates={gallery_urls:urls};
+  if(urls.length)updates.image_url=urls[0];
+  const {error:updateError}=await havenClient.from('properties').update(updates).eq('id',property.id);
+  if(updateError)throw updateError;
+
+  $("#hostMessage").textContent=`Property saved with ${urls.length} photo${urls.length===1?'':'s'}. It is a draft and will appear publicly after review and publishing.`;
+  form.reset();
+  toast("Property draft saved");
+ }catch(err){
+  $("#hostMessage").textContent="Could not finish saving the property: "+(err.message||"Please try again.");
+ }finally{
+  submit.disabled=false;
+  submit.textContent="Save property draft ↗";
+ }
 });
+
 function openProperty(stay){
  const gallery=[...new Set([...(Array.isArray(stay.gallery_urls)?stay.gallery_urls:[]),stay.image_url].filter(Boolean))].slice(0,12);
  const amenities=Array.isArray(stay.amenities)?stay.amenities:[];
@@ -64,12 +116,33 @@ function openBooking(stay){
  form.querySelectorAll('input,select').forEach(el=>el.addEventListener('change',updateQuote));updateQuote();
  form.addEventListener('submit',async e=>{e.preventDefault();if(!havenClient||!currentUser){$("#bookingMessage").textContent="Please sign in to request this stay.";return;}const f=new FormData(form),checkIn=String(f.get('checkin')),checkOut=String(f.get('checkout')),guestCount=Number(f.get('guests'));if(!checkIn||!checkOut||checkOut<=checkIn){$("#bookingMessage").textContent="Check-out must be after check-in.";return;}if(guestCount>Number(stay.max_guests||2)){$("#bookingMessage").textContent="Guest count exceeds the property limit.";return;}const button=form.querySelector('button[type=submit]');button.disabled=true;button.textContent='Checking dates…';const {data,error}=await havenClient.rpc('request_booking',{p_property_id:stay.id,p_check_in:checkIn,p_check_out:checkOut,p_guests:guestCount});button.disabled=false;button.textContent='Request this stay ↗';if(error){$("#bookingMessage").textContent=error.message;return;}const result=Array.isArray(data)?data[0]:data;$("#bookingMessage").innerHTML=`<strong>Request sent successfully.</strong><br>${Number(result.nights)} nights · ${money(Number(result.guest_total_before_taxes_and_payment_fees??result.subtotal),result.currency)} estimated stay total.<br>Booking reference: ${escapeHtml(String(result.booking_id||'').slice(0,8))}. Payment will unlock here after the host accepts.`;toast('Booking request sent');});
 }
-$("#listingGrid").addEventListener('click',e=>{const saveButton=e.target.closest('[data-save]');if(saveButton){const id=saveButton.dataset.save;if(saved.has(id))saved.delete(id);else saved.add(id);render();toast(saved.has(id)?'Saved to your favourites':'Removed from favourites');return;}const detailButton=e.target.closest('[data-details]');if(detailButton){const stay=stays.find(s=>String(s.id)===detailButton.dataset.details);if(stay)openProperty(stay);}});
+$("#listingGrid").addEventListener('click',e=>{const saveButton=e.target.closest('[data-save]');if(saveButton){const id=saveButton.dataset.save;if(saved.has(id))saved.delete(id);else saved.add(id);render();toast(saved.has(id)?'Saved to your favourites':'Removed from your favourites');return;}const detailButton=e.target.closest('[data-details]');if(detailButton){const stay=stays.find(s=>String(s.id)===detailButton.dataset.details);if(stay)openProperty(stay);}});
 function statusLabel(v){return String(v||"unknown").replaceAll("_"," ");}
 async function loadDashboard(){const out=$("#dashboardContent");if(!havenClient||!currentUser){out.innerHTML='<div class="empty">Sign in to see your bookings and manage stays.</div>';return;}out.innerHTML='<div class="loading">Loading your bookings…</div>';const {data:rows,error}=await havenClient.from("bookings").select("id,property_id,guest_id,host_id,check_in,check_out,guests,currency,subtotal,platform_fee,guest_total,host_payout_estimate,status,payment_status,created_at").order("created_at",{ascending:false}).limit(50);if(error){out.innerHTML=`<div class="empty">Could not load bookings: ${escapeHtml(error.message)}</div>`;return;}if(!rows?.length){out.innerHTML='<div class="empty">No booking requests yet. Request a stay from a published database listing to begin.</div>';return;}out.innerHTML=rows.map(b=>{const isHost=b.host_id===currentUser.id;let actions='';if(isHost&&b.status==='requested')actions=`<button class="btn btn-dark" data-booking-action="accept" data-id="${b.id}">Accept</button><button class="btn btn-quiet" data-booking-action="decline" data-id="${b.id}">Decline</button>`;if(!isHost&&['requested','accepted'].includes(b.status)&&b.payment_status==='unpaid')actions+=`<button class="btn btn-quiet" data-booking-action="cancel" data-id="${b.id}">Cancel request</button>`;if(!isHost&&b.status==='accepted'&&b.payment_status!=='paid')actions+=`<button class="btn btn-dark" data-booking-action="pay" data-id="${b.id}">Continue to payment</button>`;if(!isHost&&b.status==='accepted'&&b.payment_status==='paid'&&b.check_in<=new Date().toISOString().slice(0,10)&&b.check_out>new Date().toISOString().slice(0,10))actions+=`<button class="btn btn-dark" data-booking-action="havencheck" data-id="${b.id}">Start HavenCheck</button>`;return `<article class="booking-row"><div><span class="booking-status">${escapeHtml(statusLabel(b.status))} · ${escapeHtml(statusLabel(b.payment_status))}</span><h3>${isHost?'Guest booking request':'Your trip'} · ${escapeHtml(b.check_in)} to ${escapeHtml(b.check_out)}</h3><p>${b.guests} guest${Number(b.guests)===1?'':'s'} · ${money(Number(b.subtotal),b.currency)} subtotal · Haven fee ${money(Number(b.platform_fee),b.currency)}</p><p>Booking reference: ${escapeHtml(b.id.slice(0,8))} · ${isHost?'You are the host':'You are the guest'}</p></div><div class="booking-actions">${actions||'<span class="small-muted">No action needed right now</span>'}</div></article>`;}).join('');const {data:checks}=await havenClient.from('safety_checkins').select('id,scheduled_for,state').eq('user_id',currentUser.id).eq('state','scheduled').order('scheduled_for',{ascending:true}).limit(1);if(checks?.length){const c=checks[0];out.innerHTML+=`<article class="booking-row"><div><span class="booking-status">HavenCheck scheduled</span><h3>Your safety check-in</h3><p>Due: ${escapeHtml(new Date(c.scheduled_for).toLocaleString())}</p><p>Confirm you are okay to close this check-in and schedule the next one.</p></div><div class="booking-actions"><button class="btn btn-dark" data-checkin-confirm="${c.id}">I’m okay ↗</button></div></article>`;}}
-$("#payoutSetupForm").addEventListener("submit",async e=>{e.preventDefault();if(!havenClient||!currentUser){toast("Connect Supabase and sign in first");return;}const countryCode=new FormData(e.currentTarget).get("countryCode").toString().trim().toUpperCase();const button=e.currentTarget.querySelector("button");button.disabled=true;button.textContent="Preparing secure link…";const {data,error}=await havenClient.functions.invoke("start-host-onboarding",{body:{countryCode}});button.disabled=false;button.textContent="Set up host payouts ↗";if(error||data?.error){toast(data?.error||error.message||"Could not start onboarding");return;}if(data?.url)window.location.assign(data.url);else toast("The payment provider did not return an onboarding link.");});
+$("#payoutSetupForm").addEventListener("submit",async e=>{
+ e.preventDefault();
+ const form=e.currentTarget;
+ if(!havenClient||!currentUser){toast("Connect Supabase and sign in first");return;}
+ const countryCode=String(new FormData(form).get("countryCode")||"").trim().toUpperCase();
+ const button=form.querySelector("button[type=submit]")||form.querySelector("button");
+ if(!button){toast("Could not find the payout setup button.");return;}
+ button.disabled=true;
+ button.textContent="Preparing secure link…";
+ try{
+  const {data,error}=await havenClient.functions.invoke("start-host-onboarding",{body:{countryCode}});
+  if(error||data?.error)throw new Error(data?.error||error?.message||"Could not start onboarding");
+  if(data?.url)window.location.assign(data.url);
+  else throw new Error("The payment provider did not return an onboarding link.");
+ }catch(err){
+  toast(err.message||"Could not start host onboarding");
+ }finally{
+  button.disabled=false;
+  button.textContent="Set up host payouts ↗";
+ }
+});
 $("#dashboardLoad").addEventListener("click",loadDashboard);
 $("#dashboardContent").addEventListener("click",async e=>{const checkButton=e.target.closest("[data-checkin-confirm]");if(checkButton&&havenClient&&currentUser){checkButton.disabled=true;const {data,error}=await havenClient.rpc("confirm_havencheck",{p_checkin_id:checkButton.dataset.checkinConfirm});if(error){toast(error.message);checkButton.disabled=false;}else{toast(data?.next_scheduled_for?`Check-in confirmed. Next check-in: ${new Date(data.next_scheduled_for).toLocaleString()}`:"Check-in confirmed.");await loadDashboard();}return;}const b=e.target.closest("[data-booking-action]");if(!b||!havenClient||!currentUser)return;const action=b.dataset.bookingAction,id=b.dataset.id;b.disabled=true;try{if(action==='accept'||action==='decline'){const {error}=await havenClient.rpc('respond_to_booking',{p_booking_id:id,p_accept:action==='accept'});if(error)throw error;toast(action==='accept'?'Booking accepted':'Booking declined');await loadDashboard();}else if(action==='cancel'){const {error}=await havenClient.rpc('cancel_booking',{p_booking_id:id,p_reason:'Cancelled by guest'});if(error)throw error;toast('Booking cancelled');await loadDashboard();}else if(action==='pay'){const {data,error}=await havenClient.functions.invoke('create-checkout',{body:{bookingId:id}});if(error)throw error;if(data?.error)throw new Error(data.error);if(!data?.url)throw new Error('Payment checkout URL was not returned.');window.location.assign(data.url);}else if(action==='havencheck'){const {data,error}=await havenClient.rpc('start_havencheck',{p_booking_id:id});if(error)throw error;toast(`HavenCheck scheduled for ${new Date(data.scheduled_for).toLocaleString()}`);await loadDashboard();}}catch(err){toast(err.message||'Could not complete that action');b.disabled=false;}});
 $("#newsletterForm").addEventListener("submit",async e=>{e.preventDefault();const email=$("#newsletterEmail").value.trim();if(havenClient){const {error}=await havenClient.from("waitlist").insert({email});if(error){$("#newsletterMessage").textContent=error.message;return;}$("#newsletterMessage").textContent="You're on the list. Thank you!";}else{$("#newsletterMessage").textContent="Thanks! Connect Supabase to store sign-ups securely.";const list=JSON.parse(localStorage.getItem("haven_waitlist")||"[]");if(!list.includes(email)){list.push(email);localStorage.setItem("haven_waitlist",JSON.stringify(list));}}e.target.reset();});
 const today=new Date();$("#checkin").min=today.toISOString().slice(0,10);$("#checkout").min=today.toISOString().slice(0,10);$("#checkin").addEventListener("change",()=>{if($("#checkin").value){const d=new Date($("#checkin").value+"T12:00:00");d.setDate(d.getDate()+1);$("#checkout").min=d.toISOString().slice(0,10);}});
-render();initSupabase();
+render();
+initSupabase();
